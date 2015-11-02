@@ -391,11 +391,15 @@ module DocusignRest
         requireIdLookup:                       false,
         roleName:                              recipient[:role_name],
         routingOrder:                          recipient[:routing_order],
-        socialAuthentications:                 nil
+        socialAuthentications:                 nil,
       }
 
       if recipient[:email_notification]
         doc_recipient[:emailNotification] = recipient[:email_notification]
+      end
+
+      if recipient[:excluded_documents]
+        doc_recipient[:excludedDocuments] = recipient[:excluded_documents]
       end
 
       if recipient[:embedded]
