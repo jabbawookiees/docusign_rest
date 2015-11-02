@@ -289,6 +289,7 @@ module DocusignRest
     #                      the clientUserId value to the signer's email.
     # email_notification - Send an email or not
     # role_name          - The signer's role, like 'Attorney' or 'Client', etc.
+    # routing_order      - Determines the order this person signs the document
     # template_locked    - Doesn't seem to work/do anything
     # template_required  - Doesn't seem to work/do anything
     # anchor_string      - The string of text to anchor the 'sign here' tab to
@@ -307,38 +308,7 @@ module DocusignRest
       doc_signers = []
 
       signers.each_with_index do |signer, index|
-        doc_signer = {
-          email:                                 signer[:email],
-          name:                                  signer[:name],
-          accessCode:                            '',
-          addAccessCodeToEmail:                  false,
-          customFields:                          nil,
-          iDCheckConfigurationName:              nil,
-          iDCheckInformationInput:               nil,
-          inheritEmailNotificationConfiguration: false,
-          note:                                  '',
-          phoneAuthentication:                   nil,
-          recipientAttachment:                   nil,
-          recipientId:                           "#{index + 1}",
-          requireIdLookup:                       false,
-          roleName:                              signer[:role_name],
-          routingOrder:                          index + 1,
-          socialAuthentications:                 nil
-        }
-
-        if signer[:email_notification]
-          doc_signer[:emailNotification] = signer[:email_notification]
-        end
-
-        if signer[:embedded]
-          doc_signer[:clientUserId] = signer[:client_id] || signer[:email]
-        end
-
-        if options[:template] == true
-          doc_signer[:templateAccessCodeRequired] = false
-          doc_signer[:templateLocked]             = signer[:template_locked].nil? ? true : signer[:template_locked]
-          doc_signer[:templateRequired]           = signer[:template_required].nil? ? true : signer[:template_required]
-        end
+        doc_signer = generate_generic_recipient(signer, index, options)
 
         doc_signer[:autoNavigation]   = false
         doc_signer[:defaultRecipient] = false
@@ -372,6 +342,106 @@ module DocusignRest
       doc_signers
     end
 
+    # Internal: takes an array of hashes of carbon copies a document is sent to
+    # document and allows for setting several options. Not all options are
+    # currently dynamic but that's easy to change/add which I (and I'm
+    # sure others) will be doing in the future.
+    #
+    # template           - Includes other optional fields only used when
+    #                      being called from a template
+    # email              - The signer's email
+    # name               - The signer's name
+    # embedded           - Tells DocuSign if this is an embedded signer which
+    #                      determines weather or not to deliver emails. Also
+    #                      lets us authenticate them when they go to do
+    #                      embedded signing. Behind the scenes this is setting
+    #                      the clientUserId value to the signer's email.
+    # email_notification - Send an email or not
+    # role_name          - The signer's role, like 'Attorney' or 'Client', etc.
+    # routing_order      - Determines the order this person signs the document
+    # template_locked    - Doesn't seem to work/do anything
+    # template_required  - Doesn't seem to work/do anything
+    def get_carbon_copies(carbon_copies, signers_count, options={})
+      doc_carbon_copies = []
+      if carbon_copies
+        carbon_copies.each_with_index do |carbon_copy, index|
+          doc_cc = generate_generic_recipient( carbon_copy, signers_count + index, options)
+          doc_carbon_copies << doc_cc
+        end
+      end
+      doc_carbon_copies
+    end
+
+    # Internal: takes common arguments for recipients and generates
+    # common properties for hashes.
+    def generate_generic_recipient(recipient, recipient_id, options)
+      doc_recipient = {
+        email:                                 recipient[:email],
+        name:                                  recipient[:name],
+        accessCode:                            '',
+        addAccessCodeToEmail:                  false,
+        customFields:                          nil,
+        iDCheckConfigurationName:              nil,
+        iDCheckInformationInput:               nil,
+        inheritEmailNotificationConfiguration: false,
+        note:                                  '',
+        phoneAuthentication:                   nil,
+        recipientAttachment:                   nil,
+        recipientId:                           "#{recipient_id + 1}",
+        requireIdLookup:                       false,
+        roleName:                              recipient[:role_name],
+        routingOrder:                          recipient[:routing_order],
+        socialAuthentications:                 nil
+      }
+
+      if recipient[:email_notification]
+        doc_recipient[:emailNotification] = recipient[:email_notification]
+      end
+
+      if recipient[:embedded]
+        doc_recipient[:clientUserId] = recipient[:client_id] || recipient[:email]
+      end
+
+      if options[:template] == true
+        doc_recipient[:templateAccessCodeRequired] = false
+        doc_recipient[:templateLocked]             = recipient[:template_locked].nil? ? true : recipient[:template_locked]
+        doc_recipient[:templateRequired]           = recipient[:template_required].nil? ? true : recipient[:template_required]
+      end
+
+      doc_recipient
+    end
+
+    # Internal: Takes the arguments to one of the create_envelope/template methods
+    # and returns the recipients object in the docusign api.
+    def get_recipients(params, options={})
+      if params[:recipients]
+        params[:recipients]
+      else
+        recipients = {
+          signers: get_signers(params[:signers], options),
+          carbonCopies: get_carbon_copies(params[:carbon_copies], params[:signers].size, options)
+        }
+        order_recipients(recipients[:signers], recipients[:carbonCopies])
+        recipients
+      end
+    end
+
+    # Internal: Generates routing orders for recipients. It will respect provided routing orders provided,
+    # then generate the rest starting from 1. Signers go before carbon copies.
+    def order_recipients(signers, carbon_copies)
+      reserved = (signers + carbon_copies).map { |r| r[:routingOrder] }.compact
+
+      current_routing_number = 1
+      (signers + carbon_copies).each do |recipient|
+        if recipient[:routingOrder].nil?
+          while reserved.include?(current_routing_number)
+            current_routing_number += 1
+          end
+          recipient[:routingOrder] = current_routing_number
+          current_routing_number += 1
+        end
+      end
+    end
 
     # TODO (2014-02-03) jonk => document
     def get_tabs(tabs, options, index)
@@ -605,9 +675,7 @@ module DocusignRest
         emailBlurb:   "#{options[:email][:body] if options[:email]}",
         emailSubject: "#{options[:email][:subject] if options[:email]}",
         documents: get_documents(ios),
-        recipients: {
-          signers: get_signers(options[:signers])
-        },
+        recipients: get_recipients(options),
         status: "#{options[:status]}",
         customFields: options[:custom_fields]
       }.to_json
@@ -644,6 +712,8 @@ module DocusignRest
     #                 configured here as well. I usually leave it blank.
     # signers       - An array of hashes of signers. See the
     #                 get_signers method definition for options.
+    # carbon_copies - An array of hashes of carbon copies. See the
+    #                 get_generic_recipient method definition for options.
     # description   - The template description
     # name          - The template name
     # headers       - Optional hash of headers to merge into the existing
@@ -662,7 +732,7 @@ module DocusignRest
         emailSubject: "#{options[:email][:subject] if options[:email]}",
         documents: get_documents(ios),
         recipients: {
-          signers: get_signers(options[:signers], template: true)
+          signers: get_recipients(options, template: true)
         },
         envelopeTemplateDefinition: {
           description: options[:description],

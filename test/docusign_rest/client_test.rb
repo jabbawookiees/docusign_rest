@@ -154,6 +154,60 @@ describe DocusignRest::Client do
       end
     end
 
+    describe "#carbon_copies" do
+      before do
+        options = [
+          {name: 'first', email: 'user@example.com', access_code: '12345', email_notification: {email_body: 'This is an email'}},
+          {name: 'second', email: 'user2@example.com'}
+        ]
+        @result = @client.get_carbon_copies(options, 1)
+      end
+
+      it 'carbon copies returns an array' do
+        @result.must_be_instance_of Array
+      end
+      it 'carbon copies processes multiple records' do
+        @result.size.must_equal(2)
+      end
+      it 'carbon copies increments and injects recipientId' do
+        @result[0][:recipientId].must_equal("2")
+        @result[1][:recipientId].must_equal("3")
+      end
+    end
+
+    describe "#get_recipients" do
+      before do
+        params = {
+          signers: [
+            {name: 'first', email: 'signer1@example.com'},
+            {name: 'second', email: 'signer2@example.com'},
+            {name: 'fourth', email: 'signer3@example.com', routing_order: 4}
+          ],
+          carbon_copies: [
+            {name: 'fifth', email: 'cc1@example.com'},
+            {name: 'third', email: 'cc2@example.com', routing_order: 3}
+          ]
+        }
+        @recipients = @client.get_recipients(params)
+        @signers = @recipients[:signers]
+        @carbon_copies = @recipients[:carbonCopies]
+      end
+
+      it 'signers and carbon copies must be arrays' do
+        @signers.must_be_instance_of Array
+        @carbon_copies.must_be_instance_of Array
+      end
+      it 'routing orders must be increasing' do
+        @signers[0][:routingOrder].must_equal(1)
+        @signers[1][:routingOrder].must_equal(2)
+        @carbon_copies[1][:routingOrder].must_equal(3)
+      end
+      it 'provided routing orders must be respected' do
+        @signers[2][:routingOrder].must_equal(4)
+        @carbon_copies[0][:routingOrder].must_equal(5)
+      end
+    end
+
     describe "embedded signing" do
       before do
         # create the template dynamically
